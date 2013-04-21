@@ -1,0 +1,233 @@
+#!/bin/bash
+#Amenu "Adaptive Menu" for Openbox.
+# Copyright (C) Jessiah Hubbard <jessejamesillusionist@gmail.com>
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+#      Amenu is relatively simple and uses a very simple hueristics based on
+#   the frequency the user accesses his/her applications though openbox's menu 
+#   as well as when the last time a particular application was launched.
+#   
+#  
+INPUT="$@"
+f_exit() { if (( $? > 0 )) ; then exit $? ; fi ;}
+f_help_doc() { 
+cat <<EOF
+Amenu (Adaptive Menu) for openBox
+   Usage:  amenu [application to be executed and logged]
+           amenu [no options]
+   Summary: 
+      when executed without any options Amenu generates
+   xml code presenting the most used applications in order top-down 
+   following the pipemenu specification for OpenBox.
+      
+   Commandline Options: 
+      --setup         Generate default configuration file and a fresh.
+      --dump-log      Sort and print app_usage.log most to least used.
+      --clear-log     Erase app_usage.log history and start fresh.
+    
+      --help          Print this help text.
+     
+EOF
+}
+#Config file contents
+f_cfg() { 
+cat <<EOF
+#Amenu's configuration file.
+#This is pretty self explanatory. LOG is the path where dynaMOB keeps and continuously logs 
+#application usage statistics MENU_FILE is th path to your menu.xml the default should be
+#correct unless you use a different path or your DE/seesion manager changes it 
+#you can change it here otherwise leave this alone. 
+
+MENU_FILE=$HOME/.config/openbox/menu.xml
+#If the LOG path here is changed after already using Amenu then simply copy existing 
+#log file to the new path
+
+LOG=$HOME/.cache/openbox/app_usage.log 
+
+#SHOW_ITEMS determines how many apps to display in the final pipemenu.
+SHOW_ITEMS=10
+
+#LOG_PERIOD is an optional configuration it accepts only human readable 
+#arguments to determine how long log entries will be kept. They must be quoted
+#Examples: LOG_PERIOD="2 weeks" or LOG_PERIOD="5 days". keep "forever" here if you want 
+#it to log usage stats forever.
+
+LOG_PERIOD="forever"
+EOF
+}
+TIME=$(date +%Y%m%d%H%M%S)
+if [[ ! -f $HOME/.config/openbox/Amenu.cfg ]] ; then
+	f_cfg > $HOME/.config/openbox/Amenu.cfg
+fi
+source "$HOME/.config/openbox/Amenu.cfg"
+ 
+#For the intial list this simply reads all of the menu.xml and writes the extries to a dated usage.log 
+f_build_empty_log() {
+	#Nothing special here... just striping the xml into only the tag values for each item in menu with execute/command lines..
+	f_strip_xml() {
+		awk '/<execute>/','/<\/execute>/' $MENU_FILE \
+	 | sed -e 's_\t__g'\
+		    -e 's_<execute>__g'\
+		    -e 's_</execute>__g'\
+ 	       -e 's_amenu __g' 
+		awk '/<command>/','/<\/command>/' $MENU_FILE \
+	 | sed -e 's_\t__g'\
+			 -e 's_<command>__g'\
+			 -e 's_</command>__g'\
+			 -e 's_amenu __g'
+	}  #just a really long awk/sed line... Ugly but works for this purpose and is really only needed once.
+	OIFS="$IFS" ; IFS=$'\n'
+	ALL_APPS=( $(f_strip_xml) )
+	IFS="$OIFS"
+	
+	for NEW in "${ALL_APPS[@]}" ; do
+		echo "0#00000000000000#$NEW"
+	done | sort -u
+}
+f_write_new_menu() {
+	if [[ ! -f $HOME/.config/openbox/.menu_original.xml.bkp ]] ; then
+		cp $MENU_FILE $HOME/.config/openbox/.menu_original.xml.bkp
+	else
+		cp $MENU_FILE $HOME?.config/openbox/menu-$(date -I)-modified.xml.bkp
+	fi
+	sed -i 's|>amenu |>|g' -e 's|<execute>|<execute>amenu |g' -e 's|||g' -e 's|||g' $MENU_FILE
+}
+LOG="$HOME/.cache/openbox/app_usage.log"
+if [[ ! -f $LOG ]] ; then 
+	echo "log file not found... creating an empty one."
+	f_build_empty_log > $HOME/.cache/openbox/app_usage.log
+	exit 0	
+fi
+
+if [[ ${1:0:2} = -- ]] ; then
+	if [[ $1 == --clear-log ]] ; then 
+		f_build_empty_log > $LOG 
+		exit 0
+	elif [[ $1 == --setup ]] ; then 
+		f_build_empty_log > "$LOG"
+		f_cfg > $HOME/.config/openbox/Amenu.cfg
+		if [[ ! -f $HOME/.config/openbox/.menu_original.xml.bkp ]] ; then
+			cp $MENU_FILE $HOME/.config/openbox/.menu_original.xml.bkp
+		else
+			cp $MENU_FILE $HOME?.config/openbox/.menu-$(date -I)-modified.xml.bkp
+		fi
+		
+		exit 0
+	elif [[ $1 == --dump-log ]] ; then
+		echo 'Log Format:   [N]#[AT]#[C]'
+		echo 'N: Number of times executed.'
+		echo 'AT: last Access Time in YYYYMMDDHHMMSS (24 hour format).'
+		echo 'C: The command line which was executed from the openbox menu.'
+		sort -nr $LOG 
+		exit 0
+	elif [[ $1 == --help ]] ; then
+		f_help_doc ; exit 0
+	fi
+fi
+f_count_fld() { cut -d '#' -f 1 $LOG ; }
+f_time_fld() { cut -d '#' -f 2 $LOG ; }
+f_name_fld() { cut -d '#' -f 3 $LOG ; }
+f_cat() { cat $LOG ; }
+
+f_pipe_xml() { 
+	#Generate entry labels with the beginning letter uppercase based on the command which executes 
+	#the application this is for formatting only and can be removed by commenting the first "for loop" out
+	#and swapping the ${New_Label[H]} reference for ${PIPE_ARRAY[H]} as found in the third printf line
+	#within the while loop.
+	unset PIPE_ARRAY[@]
+	OIFS="$IFS"
+	IFS=$'\n'
+	PIPE_ARRAY=( $(tail -$SHOW_ITEMS $LOG | sort -nr | cut -d '#' -f 3) )
+	LOGGED_APPS=( $(f_name_fld) ) 
+	IFS="$OIFS"
+	H=0
+	for Cc in "${PIPE_ARRAY[@]}" ; do	
+		Word="${PIPE_ARRAY[H]}"
+		New_Label[H]="$(tr '[a-z]' '[A-Z]' <<<${Word:0:1})${Word:1}"
+		(( H++ ))
+	done
+	#The below code prints the final xml code out to openbox when used in a pipemenu.
+	X=0
+	echo "<openbox_pipe_menu>"
+		while (( X < SHOW_ITEMS )) ; do
+			echo -e "\t<item label=\"${New_Label[X]}\">"
+			echo -e "\t\t<action name=\"Execute\">"
+			echo -e "\t\t\t<command>amenu "${PIPE_ARRAY[X]}"</command>"
+			echo -e "\t\t</action>"
+			echo -e "\t</item>"
+			(( X++ ))
+		done
+	echo "</openbox_pipe_menu>"
+}
+
+#Opens original log and generates new log with the executed command incremented and time updated
+#or adds it in if it is a new addition. 
+f_write_log() {
+	OIFS="$IFS" ; IFS=$'\n'
+	#Generating the 3 arrays one for each field in app_usage.log 
+	LOGGED_N=( $(f_count_fld) ) ; LOGGED_APPS=( $(f_name_fld) ) ; LOGGED=( $(f_cat) )
+	LOGGED_T=( $(f_time_fld) )
+	IFS="$OIFS"
+	E=no ; N=0 ; A=0 T=0
+	#Check if a log period is set and if so evaluate log entries then unset
+	#onse which are older than the set values in LOG_PERIOD which is converted
+	#to YYYYMMDDHHMMSS for easy arithmatic evalution.  
+	if [[ $LOG_PERIOD != forever ]] ; then 
+		LOG_PERIOD=$(date --date="$LOG_PERIOD ago" +%Y%m%d%H%M%S )
+	fi 	
+	for AGE in "${LOGGED_T[@]}" ; do
+		if (( AGE < LOG_PERIOD )) ; then
+			unset LOGGED[T]
+		fi
+		(( T++ ))
+	done
+	#First check for matching entries for field/column 3, then increment the corresponding field/column 1
+	#number and set E to yes(this acts as a toggle/switch in the next loop.
+	for CHECK in "${LOGGED_APPS[@]}"	; do	
+		if [[ $INPUT = $CHECK ]] ; then
+			E=yes 
+			X=${LOGGED_N[A]}
+			break
+		fi
+		(( A++ ))
+	done
+	#Print the log format based on 3 conditions: (1) if no match was found in previous loop 
+	#print a new entry. (2) if there is a match update it with correct time and usage values.
+	#(3) otherwise just reprint the already existing log entries and run them all though a 
+	#numeric sort (sort -u).
+	for B in "${LOGGED_APPS[@]}" ; do
+		if [[ $E = no ]] ; then 
+			printf "1#$TIME#$INPUT\n" ; E=yes 
+		fi
+		if [[ $INPUT = $B && $E = yes ]] ; then
+			(( X++ ))
+			printf "$X#$TIME#$B\n" 
+			unset LOGGED[N]
+		fi
+		if [[ $INPUT != $B ]] ; then
+			printf "${LOGGED[N]}\n"  
+		fi
+		(( N++ ))
+	done | sort -n > $LOG 
+}
+if [[ -n $@ && ${1:0:1} != - ]] ; then 
+	exec $INPUT &
+	f_exit
+	f_write_log
+	exit 0
+fi
+
+if [[ -z "$INPUT" ]] ; then f_pipe_xml ; fi
+
