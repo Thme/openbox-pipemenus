@@ -1,14 +1,64 @@
 #!/bin/bash
-#Netpipe the pipemenu interface to connman written in bash for openbox
-#
+#ConnMenu the pipemenu interface to connman written in bash for openbox
+#wifi_dc85de828967_hidden_managed_ieee8021x
+f_helpdoc() {
+cat <<EOF
+   ConnMenu: An openbox pipe-menu control for connman the "Connection Manager"
+   Usage: connmenu [options OR connman commands ]
+   Pipe Options
+      --main-menu           Print XML for generating the main pipe-menu.
+
+      --essids              Pipe-menu XML for listing networks  
+                            list (submenu within the main pipe-menu).
+
+      --tech                Print XML for generating on/off toggles list for
+                            compatible networking devices (submenu within the 
+                            main menu).
+   Command Line Options
+      <conmann connect ..>  Executes "connman connect" to the target service
+                            and open passkey dialog(Xdialog). This is used to 
+                            invoke an passkey window dialog when connecting to
+                            a new secure network for the first time.
+ 
+      --help                Print this help text.
+EOF
+exit 0
+}
+#################################################################################
+f_grep_pass() { grep -q "Passphrase" $X/settings ;}
+#################################################################################
+f_profiled() {
+	for X in /var/lib/connman/* ; do
+		if [[ -f $X/settings ]] && f_grep_pass ; then
+			grep "\[wifi_" $X/settings | sed 's/[^a-z0-9_]//g'
+		fi
+	done
+}
+#################################################################################
 f_all_services() { connmanctl services | awk '{print $NF}' ;}
-f_essids() { connmanctl services | awk '{$(NF--)=""; print}' ;}
+#################################################################################
+f_essids() { 
+	f_scan() { connmanctl scan wifi ;}
+	TEST_LIST="$(connmanctl services)"
+	ERROR=0
+	if [[ f_scan && -n $TEST_LIST ]] ; then
+		connmanctl services | awk '{$(NF--)=""; print}' 
+	else
+		ERROR=1
+	fi 
+}
+#f_essids 
+#exit 0
+#################################################################################
 f_sec_services() {
 	f_all_services | grep "_psk"
 	f_all_services | grep "_wep" 
 }
+#################################################################################
 f_unsec_services() { f_all_services | grep "_none" ;}
-if [[ -n $@ && ${1:0:2} != -- ]] ; then 
+#################################################################################
+f_exec_xdialog() {
+if [[ $2 == connect ]] ; then 
 	PASS=$(Xdialog --inputbox "Enter WEP/WPA/WPA2 Passkey" 6 40 2>&1)
 	INPUT="$@ $PASS"
 	exec $INPUT  
@@ -18,6 +68,8 @@ if [[ -n $@ && ${1:0:2} != -- ]] ; then
 	fi
 	exit 0
 fi
+}
+#################################################################################
 f_technologies() {
 	ON_OFF=( $(connmanctl technologies | grep "Powered" | awk '{print $NF}') )
 	NAME=( $(connmanctl technologies | grep "Name" | awk '{print $NF}') )
@@ -36,74 +88,37 @@ f_technologies() {
 		(( N++ ))
 	done
 	echo "</openbox_pipe_menu>"
+exit 0
 }
-if [[ $1 == --tech ]] ; then
-	f_technologies
-	exit 0
-fi
-
-##########  PRINT ALL ARRAYS AS LISTS  ####################
-###########################################################
-#echo "NET_LIST"													  ### 
-#for X in "${NET_LIST[@]}" ; do echo $X ; done			  ### 
-#echo																	  ### 	
-#echo "NEW_NET"													  ### 			
-#for X in "${NEW_NET[@]}" ; do echo $X ; done			  ### 
-#echo																	  ### 	
-#echo "SECURE"														  ### 	
-#for X in "${SECURE[@]}" ; do echo $X ; done				  ### 	
-#echo																	  ### 	
-#echo "UNSECURE"													  ### 	
-#for X in "${UNSECURE[@]}" ; do echo $X ; done			  ### 	
-#echo																	  ### 							
-#echo "SERVICES"													  ### 		
-#for X in "${SERVICES[@]}" ; do echo $X ; done			  ### 			
-#echo																	  ### 			
-#echo "PROFILED"													  ### 		
-#for X in "${PROFILED[@]}" ; do echo $X ; done			  ### 		
-#echo																	  ### 
-#echo "ESSIDS"														  ### 		
-#for X in "${ESSIDS[@]}" ; do echo $X ; done 			  ### 
-#echo																	  ### 		
-#echo "LABELS"														  ### 		
-#for X in "${LABEL[@]}" ; do echo $X ; done				  ### 			
-#echo																	  ### 			
-#echo "NET_SERVICES"												  ### 	
-#for X in "${NET_SERVICES[@]}" ; do echo $X ; done		  ### 			
-#echo																	  ### 			
-#echo "NET"															  ### 			
-#for X in "${NET[@]}" ; do echo $X ; done					  ### 		
-#echo																	  ### 
-#exit 0																  ### 
-###########################################################
-###########################################################
-
+################################################################################
 #Creates list on networks to connect with via 
 f_networks() {
-########################################################################
-#######Populate all main arrays for filtering and final output. ########
-########################################################################
+	#######Populate all main arrays for filtering and final output. ########
 	oldIFS="$IFS"
 	IFS=$'\n'
 		ESSIDS=( $(f_essids) )
 		SERVICES=( $(f_all_services) )
-		NEW_NET=( $(for X in "${SERVICES[@]}" ; do printf "connmanctl connect $X\n" ; done) ) 
+#		NEW_NET=( $(for X in "${SERVICES[@]}" ; do printf "connmanctl connect $X\n" ; done) ) 
 		SECURE=( $(f_sec_services) )
 		UNSECURE=( $(f_unsec_services) )
-		#PROFILED=( $(for X in /var/lib/connman/*/ ; do printf "$X\n" ; done | cut -d '/' -f 5) )
-		PROFILED=( $(cat /var/lib/connman/*/settings | grep "wifi" | sed 's/[^a-z0-9_]//g') )
-		#Populate comparison arrays 
+	   PROFILED=( $(f_profiled) )
+
+		#Populate comparison array 
 		TMP_LIST=( $(for X in "${UNSECURE[@]}" ; do printf "$X\n" ; done ) )
 		TMP_LIST+=( $(for X in "${PROFILED[@]}" ; do printf "$X\n" ; done) )
 		NET_LIST=( $(for list in "${TMP_LIST[@]}" ; do printf "connmanctl connect $list\n" ; done | sort -u) ) 
 	IFS="$oldIFS"
 	unset TMP_LIST[@]
-#Get state of the wifi card via connmanctl for the toggle on/off menu button.
+	#Get state of the wifi card via connmanctl for the toggle on/off menu button.
 	STATE=( $(connmanctl state | awk '{print $NF}') )
 	
 	N=0
 	for X in "${ESSIDS[@]}" ; do
-		ESSIDS[N]="$(printf "$X\n" | sed -e 's/<//g' -e 's/>//g')"
+		if [[ $X == '<hidden>' ]] ; then		
+			unset SERVICES[N]
+			unset ESSIDS[N]
+		fi	
+	#	ESSIDS[N]="$(printf "$X\n" | sed -e 's/[<>]//g')"
 		(( N++ ))
 	done
 	
@@ -122,7 +137,7 @@ f_networks() {
 		for Y in "${SECURE[@]}" ; do
 			if [[ $X == $Y && -z $A ]] ; then
 				NET_SERVICES[N]="$X"
-				NET[N]="netpipe connmanctl connect $X" 
+				NET[N]="connmenu connmanctl connect $X" 
 				LABEL[N]="${ESSIDS[N]}"
 				A="#"
 			#	break
@@ -138,31 +153,30 @@ f_networks() {
 		done
 		(( N++ ))
 	done
-###########################################################
-###### Generate menu section for network availables. ######
+	###### Generate menu section for network availables. ######
 	echo "<openbox_pipe_menu>"
+#	if [[ -n ${ESSIDS[0]} ]] && (( EXIT = 0 )) ; then
 		X=0
-		for NETS in "${ESSIDS[@]}"	; do
+		for NET_NAME in "${ESSIDS[@]}"	; do
 			N=0 ; YN=N
-			echo -e "\t<item label=\"$NETS\">"
+			echo -e "\t<item label=\"$NET_NAME\">"
 			echo -e "\t\t<action name=\"Execute\">"
-	
-			echo -e "\t\t\t<command>"${NEW_NET[X]}"</command>"
-	
+			echo -e "\t\t\t<command>"${NET[X]}"</command>"
 			echo -e "\t\t</action>"
 			echo -e "\t</item>"
 			(( X++ ))
 		done
+#	else 
+#		echo -e "\t<separator label=\"No Networks Found\"/>"	
+#	fi
 	echo "</openbox_pipe_menu>"
+exit 0
 }
-if [[ $1 == --essids ]] ; then
-	f_networks
-fi
-
+###############################################################################
 f_netmenu() {
 echo "<openbox_pipe_menu>"
-	echo -e "<separator label=\"ConnMan Controls\"/>"
-	echo -e "\t<menu execute=\"netpipe --tech\" id=\"techpipe\" label=\"Interface\"/>"
+	echo -e "<separator label=\"ConnMan\"/>"
+	echo -e "\t<menu execute=\"connmenu --tech\" id=\"techpipe\" label=\"Interface\"/>"
 #Scan button
 	echo -e "\t<item label=\"Scan\">"
 	echo -e "\t\t<action name=\"Execute\">"
@@ -171,9 +185,17 @@ echo "<openbox_pipe_menu>"
 	echo -e "\t</item>"
 	echo -e "\t<separator/>"
 #Networks selection second pipe-menu
-	echo -e "\t<menu execute=\"netpipe --essids\" id=\"essidpipe\" label=\"Networks\"/>"
+	echo -e "\t<menu execute=\"connmenu --essids\" id=\"essidpipe\" label=\"Networks\"/>"
 echo "</openbox_pipe_menu>"
+exit 0
 }
+#No need for a manual loop case statement for processing positional parameters here
+#as only the bottom condition has to process above $1 and that is strait forward.
+#see the function f_exec_xdialog
+[[ $1 == --main-menu ]] && f_netmenu 
+[[ $1 ==	--essids ]] && f_networks 
+[[ $1 ==	--tech ]] && f_technologies 
+[[ $1	==	--help ]] && f_helpdoc 
+[[ $1	==	connmanctl ]] && f_exec_xdialog 
 
-if [[ -z $@ ]] ; then f_netmenu ; fi
 
