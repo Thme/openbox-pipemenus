@@ -70,6 +70,36 @@ if [[ $2 == connect ]] ; then
 fi
 }
 #################################################################################
+f_admin_opts() {
+	echo -e "<openbox_pipe_menu>"
+	echo -e "\t<item label=\"Restart (ConnMan daemon)\">"
+	echo -e "\t\t<action name=\"Execute\">"
+	echo -e "\t\t\t<command>gksu systemctl restart connman.service</command>"
+	echo -e "\t\t</action>"
+	echo -e "\t</item>"
+	echo -e "\t<item label=\"Stop\">"
+	echo -e "\t\t<action name=\"Execute\">"
+	echo -e "\t\t\t<command>'gksu systemctl stop connman.service'</command>"
+	echo -e "\t\t</action>"
+	echo -e "\t</item>"
+	echo -e "\t<item label=\"Start\">"
+	echo -e "\t\t<action name=\"Execute\">"
+	echo -e "\t\t\t<command>gksu systemctl start connman.service</command>"
+	echo -e "\t\t</action>"
+	echo -e "\t</item>"
+	echo -e "\t<item label=\"Disable\">"
+	echo -e "\t\t<action name=\"Execute\">"
+	echo -e "\t\t\t<command>gksu systemctl disable connman.service</command>"
+	echo -e "\t\t</action>"
+	echo -e "\t</item>"
+	echo -e "\t<item label=\"Enable\">"
+	echo -e "\t\t<action name=\"Execute\">"
+	echo -e "\t\t\t<command>'gksu systemctl enable connman.service'</command>"
+	echo -e "\t\t</action>"
+	echo -e "\t</item>"
+	echo -e "</openbox_pipe_menu>"
+}
+#################################################################################
 f_technologies() {
 	ON_OFF=( $(connmanctl technologies | grep "Powered" | awk '{print $NF}') )
 	NAME=( $(connmanctl technologies | grep "Name" | awk '{print $NF}') )
@@ -87,6 +117,7 @@ f_technologies() {
 													echo -e "\t</item>"
 		(( N++ ))
 	done
+   echo -e "\t<menu execute=\"connmenu --admin\" id=\"adminpipe\" label=\"Admin Options\"/>"
 	echo "</openbox_pipe_menu>"
 exit 0
 }
@@ -110,7 +141,7 @@ f_networks() {
 	IFS="$oldIFS"
 	unset TMP_LIST[@]
 	#Get state of the wifi card via connmanctl for the toggle on/off menu button.
-	STATE=( $(connmanctl state | awk '{print $NF}') )
+	STATE=( $(connmanctl state | awk '{print $NF}') )systemctl restart connman.service
 	
 	N=0
 	for X in "${ESSIDS[@]}" ; do
@@ -193,6 +224,7 @@ exit 0
 #as only the bottom condition has to process above $1 and that is strait forward.
 #see the function f_exec_xdialog
 [[ $1 == --main-menu ]] && f_netmenu 
+[[ $1 == --admin ]] && f_admin_opts 
 [[ $1 ==	--essids ]] && f_networks 
 [[ $1 ==	--tech ]] && f_technologies 
 [[ $1	==	--help ]] && f_helpdoc 
