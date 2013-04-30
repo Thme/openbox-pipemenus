@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #ConnMenu the pipemenu interface to connman written in bash for openbox
 #wifi_dc85de828967_hidden_managed_ieee8021x
 f_helpdoc() {
@@ -22,52 +22,40 @@ cat <<EOF
  
       --help                Print this help text.
 EOF
-exit 0
 }
-#################################################################################
-f_grep_pass() { grep -q "Passphrase" $X/settings ;}
-#################################################################################
-f_profiled() {
-	for X in /var/lib/connman/* ; do
-		if [[ -f $X/settings ]] && f_grep_pass ; then
-			grep "\[wifi_" $X/settings | sed 's/[^a-z0-9_]//g'
-		fi
-	done
-}
-#################################################################################
-f_all_services() { connmanctl services | awk '{print $NF}' ;}
-#################################################################################
-f_essids() { 
-	f_scan() { connmanctl scan wifi ;}
-	TEST_LIST="$(connmanctl services)"
-	ERROR=0
-	if [[ f_scan && -n $TEST_LIST ]] ; then
-		connmanctl services | awk '{$(NF--)=""; print}' 
+f_exec_opts() {
+	f_set_dialog() {
+		oldIFS="$IFS" ; IFS=$'\n'
+		OUTPUT=( $(sed 's_[^a-zA-Z0-9_]_#_g' /tmp/exec_connman_out.tmp) )
+		IFS="$oldIFS"
+		Y=${#OUTPUT[@]}
+		for A in "${OUTPUT[@]}" ; do
+	   	[[ -n $X ]] && B=$X
+			X="${#A[0]}"
+			(( X > B )) || X=$B
+		done ;
+		(( Y > 6 && Y + 6 ))
+		(( X + 6 && X < 30 ))
+	}
+
+	f_rmtmp() { [[ -f /tmp/exec_connman_out.tmp ]] && rm /tmp/exec_conman_out.tmp ;}
+	f_rmtmp() { [[ -f /tmp/exec_connman_out.tmp ]] && rm /tmp/exec_conman_out.tmp ;}
+	f_errorbox() { Xdialog --msgbox "Error: invalid options: $OPTS" 6 40 ;}
+
+	OPTS="$(Xdialog --stdout --inputbox "Enter command-line options for \"connmanctl\"" 6 50)"
+	if [[ -n $OPTS ]] ; then
+		f_rmtmp
+		COMMAND="connmanctl $OPTS" 
+		exec $COMMAND > /tmp/exec_connman_out.tmp & 
+		wait $!
+		E=$?
+		(( E = 0 )) ||  f_errorbox && f_rmtmp 
+		f_set_dialog	
+		wait $! 
+		Xdialog --msgbox "$(cat /tmp/exec_connman_out.tmp)" $Y $X
 	else
-		ERROR=1
-	fi 
-}
-#f_essids 
-#exit 0
-#################################################################################
-f_sec_services() {
-	f_all_services | grep "_psk"
-	f_all_services | grep "_wep" 
-}
-#################################################################################
-f_unsec_services() { f_all_services | grep "_none" ;}
-#################################################################################
-f_exec_xdialog() {
-if [[ $2 == connect ]] ; then 
-	PASS=$(Xdialog --inputbox "Enter WEP/WPA/WPA2 Passkey" 6 40 2>&1)
-	INPUT="$@ $PASS"
-	exec $INPUT  
-	EXIT=$?
-	if (( EXIT != 0 )) ; then
-		Xdialog --msgbox "The passkey you entered was incorrect" 6 40 2&>1
+		Xdialog --msgbox "Error: no options specified" 6 40
 	fi
-	exit 0
-fi
 }
 #################################################################################
 f_admin_opts() {
@@ -117,19 +105,42 @@ f_technologies() {
 													echo -e "\t</item>"
 		(( N++ ))
 	done
-   echo -e "\t<menu execute=\"connmenu --admin\" id=\"adminpipe\" label=\"Admin Options\"/>"
 	echo "</openbox_pipe_menu>"
+	
 exit 0
 }
 ################################################################################
-#Creates list on networks to connect with via 
+#Creates list of networks to connect with via connmanctl
 f_networks() {
+
+	f_all_services() { connmanctl services | awk '{print $NF}' ;}
+	f_sec_services() { f_all_services | grep "_psk" ; f_all_services | grep "_wep" ;}
+	f_unsec_services() { f_all_services | grep "_none" ;}
+	f_essids() { 
+		TEST_LIST="$(connmanctl services)"
+		ERROR=0
+		if [[ -n $TEST_LIST ]] ; then
+			connmanctl services | awk '{$(NF--)=""; print}' 
+		else
+			ERROR=1
+		fi 
+	}
+	f_grep_pass() { grep -q "Passphrase" $X/settings ;}
+	f_profiled() {
+	for X in /var/lib/connman/* ; do
+		if [[ -f $X/settings ]] && f_grep_pass ; then
+			grep "\[wifi_" $X/settings | sed 's/[^a-z0-9_]//g'
+		fi
+	done
+	}
+
+
+
 	#######Populate all main arrays for filtering and final output. ########
 	oldIFS="$IFS"
 	IFS=$'\n'
 		ESSIDS=( $(f_essids) )
 		SERVICES=( $(f_all_services) )
-#		NEW_NET=( $(for X in "${SERVICES[@]}" ; do printf "connmanctl connect $X\n" ; done) ) 
 		SECURE=( $(f_sec_services) )
 		UNSECURE=( $(f_unsec_services) )
 	   PROFILED=( $(f_profiled) )
@@ -141,15 +152,11 @@ f_networks() {
 	IFS="$oldIFS"
 	unset TMP_LIST[@]
 	#Get state of the wifi card via connmanctl for the toggle on/off menu button.
-	STATE=( $(connmanctl state | awk '{print $NF}') )systemctl restart connman.service
+	STATE=( $(connmanctl state | awk '{print $NF}') )
 	
-	N=0
+	N=0 HIDDEN='<hidden>'
 	for X in "${ESSIDS[@]}" ; do
-		if [[ $X == '<hidden>' ]] ; then		
-			unset SERVICES[N]
-			unset ESSIDS[N]
-		fi	
-	#	ESSIDS[N]="$(printf "$X\n" | sed -e 's/[<>]//g')"
+		ESSIDS[N]="$(printf "$X\n" | sed -e 's/[<>]//g')"
 		(( N++ ))
 	done
 	
@@ -207,7 +214,7 @@ exit 0
 f_netmenu() {
 echo "<openbox_pipe_menu>"
 	echo -e "<separator label=\"ConnMan\"/>"
-	echo -e "\t<menu execute=\"connmenu --tech\" id=\"techpipe\" label=\"Interface\"/>"
+	echo -e "\t<menu execute=\"connmenu --essids\" id=\"essidpipe\" label=\"Networks\"/>"
 #Scan button
 	echo -e "\t<item label=\"Scan\">"
 	echo -e "\t\t<action name=\"Execute\">"
@@ -215,19 +222,68 @@ echo "<openbox_pipe_menu>"
 	echo -e "\t\t</action>"
 	echo -e "\t</item>"
 	echo -e "\t<separator/>"
-#Networks selection second pipe-menu
-	echo -e "\t<menu execute=\"connmenu --essids\" id=\"essidpipe\" label=\"Networks\"/>"
+#Device selection second pipe-menu
+	echo -e "\t<menu execute=\"connmenu --tech\" id=\"techpipe\" label=\"Interface\"/>"
+	echo -e "\t<menu execute=\"connmenu --advanced\" id=\"advpipe\" label=\"Advanced\"/>"
+
 echo "</openbox_pipe_menu>"
 exit 0
+}
+f_exec_edit() {
+	PATH="$5"
+	exec $@ > $PATH 
+}
+#This function still needs a lot of work. Considering exporting an VALUE from a config file to set an editor instead of
+#Xdialog --editbox(this method doesn't work as It would have to run as root...
+#f_edit_profiles() {
+#	N=0
+#	for DIR in /var/lib/connman/* ; do
+#		if [[ -f $DIR/settings ]] ; then
+#			EDIT[N]="connmenu sudo Xdialog --stdout --editbox $DIR/settings 20 85"
+#			PROFILE_NAME[N]="$(grep "Name" $DIR/settings | cut -d '=' -f 2)"
+#			(( N++ ))
+#			
+#		fi
+#	done
+#	N=0
+#	echo "<openbox_pipe_menu>"
+#	for X in "${PROFILE_NAME[@]}" ; do
+#		echo -e "\t<item label=\"$X\">"
+#		echo -e "\t\t<action name=\"Execute\">"
+#		echo -e "\t\t\t<command>${EDIT[N]}</command>"
+#		echo -e "\t\t</action>"
+#		echo -e "\t</item>"
+#		(( N++ ))
+#	done
+#	echo "</openbox_pipe_menu>"
+#}
+f_advanced_menu() {
+echo "<openbox_pipe_menu>"
+	echo -e "\t<item label=\"Connmanctl options\">"
+	echo -e "\t\t<action name=\"Execute\">"
+	echo -e "\t\t\t<command>connmenu --exec-opts</command>"
+	echo -e "\t\t</action>"
+	echo -e "\t</item>"
+#Not available in the currently
+#  echo -e "\t<menu execute=\"connmenu --edit\" id=\"editpipe\" label=\"Edit Profiles\"/>"
+   echo -e "\t<menu execute=\"connmenu --admin\" id=\"adminpipe\" label=\"Admin Options\"/>"
+echo "</openbox_pipe_menu>"
 }
 #No need for a manual loop case statement for processing positional parameters here
 #as only the bottom condition has to process above $1 and that is strait forward.
 #see the function f_exec_xdialog
 [[ $1 == --main-menu ]] && f_netmenu 
+[[ $1 == --exec-opts ]] && f_exec_opts 
 [[ $1 == --admin ]] && f_admin_opts 
+[[ $1 == --advanced ]] && f_advanced_menu 
 [[ $1 ==	--essids ]] && f_networks 
-[[ $1 ==	--tech ]] && f_technologies 
+[[ $1 ==	--tech ]] && f_technologies 	
 [[ $1	==	--help ]] && f_helpdoc 
 [[ $1	==	connmanctl ]] && f_exec_xdialog 
+#Currently not implemented in this release
+#[[ $1 ==	--edit ]] && f_edit_profiles
+#[[ $1	==	sudo && $2 == Xdialog ]] && f_exec_edit
+
+
 
 
