@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #Amenu "Adaptive Menu" for Openbox.
 # Copyright (C) Jessiah Hubbard <jessejamesillusionist@gmail.com>
 #
@@ -18,7 +18,7 @@
 #      Amenu is relatively simple and uses a very simple hueristics based on
 #   the frequency the user accesses his/her applications though openbox's menu 
 #   as well as when the last time a particular application was launched.
-#   
+#    
 #  
 INPUT="$@"
 f_exit() { if (( $? > 0 )) ; then exit $? ; fi ;}
@@ -32,11 +32,14 @@ Amenu (Adaptive Menu) for openBox
    xml code presenting the most used applications in order top-down 
    following the pipemenu specification for OpenBox.
       
+   Pipemenu Options:
+		--recent        Create pipemenu of "recently used" applications
+                      instead of the "most used"  
    Commandline Options: 
       --setup         Generate default configuration file and a fresh.
       --dump-log      Sort and print app_usage.log most to least used.
       --clear-log     Erase app_usage.log history and start fresh.
-    
+      --
       --help          Print this help text.
      
 EOF
@@ -45,7 +48,7 @@ EOF
 f_cfg() { 
 cat <<EOF
 #Amenu's configuration file.
-#This is pretty self explanatory. LOG is the path where dynaMOB keeps and continuously logs 
+#This is pretty self explanatory. LOG is the path where amenu keeps and continuously logs 
 #application usage statistics MENU_FILE is th path to your menu.xml the default should be
 #correct unless you use a different path or your DE/seesion manager changes it 
 #you can change it here otherwise leave this alone. 
@@ -58,6 +61,10 @@ LOG=$HOME/.cache/openbox/app_usage.log
 
 #SHOW_ITEMS determines how many apps to display in the final pipemenu.
 SHOW_ITEMS=10
+
+#LOG_HOTKEYS will enable logging hotkey shortcuts as well as menu access. default is off.
+#To enable this set it to LOG_HOTKEYS=yes. Otherwise leave empty
+LOG_HOTKEYS=
 
 #LOG_PERIOD is an optional configuration it accepts only human readable 
 #arguments to determine how long log entries will be kept. They must be quoted
@@ -77,21 +84,23 @@ source "$HOME/.config/openbox/Amenu.cfg"
 f_build_empty_log() {
 	#Nothing special here... just striping the xml into only the tag values for each item in menu with execute/command lines..
 	f_strip_xml() {
-		awk '/<execute>/','/<\/execute>/' $MENU_FILE \
+		awk '/<execute>/','/<\/execute>/' $1 \
 	 | sed -e 's_\t__g'\
 		    -e 's_<execute>__g'\
 		    -e 's_</execute>__g'\
  	       -e 's_amenu __g' 
-		awk '/<command>/','/<\/command>/' $MENU_FILE \
+		awk '/<command>/','/<\/command>/' $1 \
 	 | sed -e 's_\t__g'\
 			 -e 's_<command>__g'\
 			 -e 's_</command>__g'\
 			 -e 's_amenu __g'
 	}  #just a really long awk/sed line... Ugly but works for this purpose and is really only needed once.
 	OIFS="$IFS" ; IFS=$'\n'
-	ALL_APPS=( $(f_strip_xml) )
-	IFS="$OIFS"
+	ALL_APPS=( $(f_strip_xml $MENU_FILE) )
+#	HOTKEYAPPS=( $(f_strip_xml $RCFILE) )
 	
+	IFS="$OIFS"
+			
 	for NEW in "${ALL_APPS[@]}" ; do
 		echo "0#00000000000000#$NEW"
 	done | sort -u
@@ -100,9 +109,18 @@ f_write_new_menu() {
 	if [[ ! -f $HOME/.config/openbox/.menu_original.xml.bkp ]] ; then
 		cp $MENU_FILE $HOME/.config/openbox/.menu_original.xml.bkp
 	else
-		cp $MENU_FILE $HOME?.config/openbox/menu-$(date -I)-modified.xml.bkp
+		cp $MENU_FILE $HOME/.config/openbox/menu-$(date -I)-modified.xml.bkp
 	fi
 	sed -i 's|>amenu |>|g' -e 's|<execute>|<execute>amenu |g' -e 's|||g' -e 's|||g' $MENU_FILE
+
+	if [[ $LOG_HOTKEYS == [Yy]es ]] ; then
+		RC_FILE="$HOME/.config/openbox/rc.xml"
+		if [[ ! -f $HOME/.config/openbox/rc_original.xml.bkp ]] ; then
+			cp $RC_FILE ${RC_FILE}_original.xml.bkp 		
+		else 
+			cp $RC_FILE ${RC_FILE}-$(date -I)-modified.xml.bkp
+		fi
+	fi
 }
 LOG="$HOME/.cache/openbox/app_usage.log"
 if [[ ! -f $LOG ]] ; then 
@@ -121,9 +139,9 @@ if [[ ${1:0:2} = -- ]] ; then
 		if [[ ! -f $HOME/.config/openbox/.menu_original.xml.bkp ]] ; then
 			cp $MENU_FILE $HOME/.config/openbox/.menu_original.xml.bkp
 		else
-			cp $MENU_FILE $HOME?.config/openbox/.menu-$(date -I)-modified.xml.bkp
+			cp $MENU_FILE $HOME/.config/openbox/.menu-$(date -I)-modified.xml.bkp
 		fi
-		
+
 		exit 0
 	elif [[ $1 == --dump-log ]] ; then
 		echo 'Log Format:   [N]#[AT]#[C]'
@@ -147,11 +165,19 @@ f_pipe_xml() {
 	#and swapping the ${New_Label[H]} reference for ${PIPE_ARRAY[H]} as found in the third printf line
 	#within the while loop.
 	unset PIPE_ARRAY[@]
-	OIFS="$IFS"
-	IFS=$'\n'
-	PIPE_ARRAY=( $(tail -$SHOW_ITEMS $LOG | sort -nr | cut -d '#' -f 3) )
-	LOGGED_APPS=( $(f_name_fld) ) 
-	IFS="$OIFS"
+	if [[ $INPUT == -T || -z $INPUT ]] ; then
+		OIFS="$IFS"
+		IFS=$'\n'
+		PIPE_ARRAY=( $(tail -$SHOW_ITEMS $LOG | sort -nr | cut -d '#' -f 3) )
+		LOGGED_APPS=( $(f_name_fld) ) 
+		IFS="$OIFS"
+	elif [[ $INPUT == --pipe-recent ]] ; then	
+		OIFS="$IFS"
+		IFS=$'\n'
+		PIPE_ARRAY=( $(cut -d '#' -f 2,3 $LOG | sort -nr | cut -d '#' -f 2) )
+		LOGGED_APPS=( $(f_name_fld) ) 
+		IFS="$OIFS"
+	fi
 	H=0
 	for Cc in "${PIPE_ARRAY[@]}" ; do	
 		Word="${PIPE_ARRAY[H]}"
@@ -174,6 +200,7 @@ f_pipe_xml() {
 
 #Opens original log and generates new log with the executed command incremented and time updated
 #or adds it in if it is a new addition. 
+
 f_write_log() {
 	OIFS="$IFS" ; IFS=$'\n'
 	#Generating the 3 arrays one for each field in app_usage.log 
@@ -181,11 +208,13 @@ f_write_log() {
 	LOGGED_T=( $(f_time_fld) )
 	IFS="$OIFS"
 	E=no ; N=0 ; A=0 T=0
+
 	#Check if a log period is set and if so evaluate log entries then unset
-	#onse which are older than the set values in LOG_PERIOD which is converted
+	#ones which are older than the set values in LOG_PERIOD which is converted
 	#to YYYYMMDDHHMMSS for easy arithmatic evalution.  
+
 	if [[ $LOG_PERIOD != forever ]] ; then 
-		LOG_PERIOD=$(date --date="$LOG_PERIOD ago" +%Y%m%d%H%M%S )
+		LOG_PERIOD=$(date --date="$LOG_PERIOD ago" +%Y%m%d%H%M%S)
 	fi 	
 	for AGE in "${LOGGED_T[@]}" ; do
 		if (( AGE < LOG_PERIOD )) ; then
@@ -193,6 +222,7 @@ f_write_log() {
 		fi
 		(( T++ ))
 	done
+
 	#First check for matching entries for field/column 3, then increment the corresponding field/column 1
 	#number and set E to yes(this acts as a toggle/switch in the next loop.
 	for CHECK in "${LOGGED_APPS[@]}"	; do	
@@ -205,8 +235,9 @@ f_write_log() {
 	done
 	#Print the log format based on 3 conditions: (1) if no match was found in previous loop 
 	#print a new entry. (2) if there is a match update it with correct time and usage values.
-	#(3) otherwise just reprint the already existing log entries and run them all though a 
+	#(3) otherwise just reprint the already existing log entries and run t	hemhem all though a 
 	#numeric sort (sort -u).
+
 	for B in "${LOGGED_APPS[@]}" ; do
 		if [[ $E = no ]] ; then 
 			printf "1#$TIME#$INPUT\n" ; E=yes 
@@ -229,5 +260,6 @@ if [[ -n $@ && ${1:0:1} != - ]] ; then
 	exit 0
 fi
 
-if [[ -z "$INPUT" ]] ; then f_pipe_xml ; fi
+[[ -z "$INPUT" || $INPUT == -T ]] && f_pipe_xml
+[[ $INPUT == --pipe-recent ]] && f_pipe_xml
 
